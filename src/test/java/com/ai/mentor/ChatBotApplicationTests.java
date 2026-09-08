@@ -8,6 +8,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -27,7 +29,7 @@ class ChatBotApplicationTests {
 
     @Test
     void chatReturnsSanitizedResponse() throws Exception {
-        when(mentorAgent.chat("user-1", "I am tired"))
+        when(mentorAgent.chat(eq("user-1"), anyString()))
                 .thenReturn("<b>Let\u2019s</b> **start** *small*.\u2026");
 
         mockMvc.perform(post("/api/mentor/chat")
@@ -41,7 +43,7 @@ class ChatBotApplicationTests {
 
     @Test
     void chatMapsTimeoutToGatewayTimeout() throws Exception {
-        when(mentorAgent.chat("user-1", "try again"))
+        when(mentorAgent.chat(eq("user-1"), anyString()))
                 .thenThrow(new RuntimeException("timeout"));
 
         mockMvc.perform(post("/api/mentor/chat")
