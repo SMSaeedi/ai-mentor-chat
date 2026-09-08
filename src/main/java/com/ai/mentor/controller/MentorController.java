@@ -1,8 +1,14 @@
 package com.ai.mentor.controller;
 
 import com.ai.mentor.mentor.MentorAgent;
+import com.ai.mentor.pipeline.ChatOrchestrator;
+import com.ai.mentor.pipeline.PipelineMetrics;
+import com.ai.mentor.pipeline.QuestionCategory;
+import com.ai.mentor.pipeline.QuestionClassifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/mentor")
@@ -10,16 +16,45 @@ import org.springframework.web.bind.annotation.*;
 public class MentorController {
 
     private final MentorAgent mentorAgent;
+    private final ChatOrchestrator orchestrator;
+    private final QuestionClassifier classifier;
+    private final PipelineMetrics metrics;
 
     public MentorController(MentorAgent mentorAgent) {
+        this(mentorAgent, null, null, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public MentorController(MentorAgent mentorAgent,
+                            ChatOrchestrator orchestrator,
+                            QuestionClassifier classifier,
+                            PipelineMetrics metrics) {
         this.mentorAgent = mentorAgent;
+        this.orchestrator = orchestrator;
+        this.classifier = classifier;
+        this.metrics = metrics;
     }
 
     @PostMapping("/chat")
     public ChatResponse chat(@RequestParam(defaultValue = "default-user") String userId,
                              @RequestBody ChatRequest request) {
-        String response = mentorAgent.chat(userId, request.message());
+        String response = orchestrator == null
+                ? mentorAgent.chat(userId, request.message())
+                : orchestrator.chat(userId, request.message());
         return new ChatResponse(sanitizeResponse(response));
+    }
+
+    @GetMapping("/classify")
+    public CategoryResponse classify(@RequestParam String question) {
+        QuestionCategory category = classifier == null
+                ? QuestionCategory.GENERAL
+                : classifier.classify(question);
+        return new CategoryResponse(category.name());
+    }
+
+    @GetMapping("/metrics")
+    public Map<String, Long> metrics() {
+        return metrics == null ? Map.of() : metrics.snapshot();
     }
 
     private String sanitizeResponse(String response) {
@@ -48,4 +83,5 @@ public class MentorController {
 
     public record ChatRequest(String message) {}
     public record ChatResponse(String response) {}
+    public record CategoryResponse(String category) {}
 }

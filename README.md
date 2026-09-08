@@ -25,13 +25,14 @@ The property is defined in `src/main/resources/application.properties`:
 ```properties
 server.port=8080
 gemini.api.key=${GEMINI_API_KEY:}
-gemini.model=gemini-3.6-flash
+gemini.model=${GEMINI_MODEL:gemini-3.6-flash}
+gemini.timeout-seconds=${GEMINI_TIMEOUT_SECONDS:90}
 ```
 
 Notes:
 - `gemini.api.key` loads the value from the environment variable.
 - If the variable is missing, the app starts with an empty key and the Gemini API will reject requests.
-- The model is set to `gemini-3.6-flash` by default.
+- The model is set to `gemini-3.6-flash` by default. Override it with `GEMINI_MODEL` when using another model available to your API account.
 
 ## 2) Run the application
 
@@ -49,6 +50,28 @@ The app runs on:
 ```text
 http://localhost:8080
 ```
+
+## H2 database
+
+The application uses a file-backed H2 database:
+
+```text
+JDBC URL: jdbc:h2:file:C:/Users/mahsa/IdeaProjects/chat-bot/data/mentor-db;AUTO_SERVER=TRUE
+User:     sa
+Password: (empty)
+Console:  http://localhost:8080/h2-console
+```
+
+In the H2 console, use the JDBC URL exactly as shown above. The database is initialized at application startup from `schema.sql`, `data.sql`, and the explicit `DatabaseInitializer`.
+
+Current tables:
+
+```sql
+select * from vendors;
+select * from response_cache;
+```
+
+`vendors` contains the vendor knowledge used by retrieval. `response_cache` contains generated responses saved by the CAG cache.
 
 ## 3) Chat API
 
@@ -84,7 +107,27 @@ The controller returns a `ChatResponse` record:
 public record ChatResponse(String response) {}
 ```
 
-## 4) Response handling and error cases
+## 4) Agent pipeline
+
+Requests now pass through a local orchestration layer:
+
+1. `QuestionClassifier` categorizes requests as `GENERAL`, `MATH`, `HARM`, or `POLITICS`.
+2. Harm and politics requests are intercepted before Gemini.
+3. `ResponseCache` provides a CAG-style fast path for repeated user requests.
+4. `VendorKnowledgeBase` supplies relational-style vendor records.
+5. `RetrievalService` supplies category-aware RAG context.
+6. The existing Gemini `MentorAgent` generates the answer, and `ConversationMemory` keeps recent user context.
+7. `PipelineMetrics` records category, cache, safety, and generation counters.
+
+Classification and metrics are available through:
+```http
+GET /api/mentor/classify?question=calculate%202%2B2
+GET /api/mentor/metrics
+```
+
+Vendor records and response cache entries are persisted in a file-backed H2 database. RAG uses a local vector store with deterministic hashed vectors and cosine similarity, so it requires no external embedding service. The storage interfaces can later be moved to PostgreSQL, Redis, or a managed vector database without changing the controller or agent contract.
+
+## 5) Response handling and error cases
 
 The app sanitizes the AI output before returning it, removing HTML tags and unwanted formatting characters.
 
@@ -110,7 +153,7 @@ The app sanitizes the AI output before returning it, removing HTML tags and unwa
 }
 ```
 
-## 5) Configuration details
+## 6) Configuration details
 
 The Gemini client is configured in `src/main/java/com/ai/mentor/config/MentorConfig.java`:
 
@@ -129,15 +172,17 @@ This means:
 - Temperature is set to `0.3` for more deterministic responses
 - Request timeout is `90 seconds`
 
-## 6) Quick checklist
+## 7) Quick checklist
 
 - Set `GEMINI_API_KEY` before starting the app
+- Remove any old `GEMINI_MODEL` value such as `gemini-2.0-flash`, or set it explicitly to `gemini-3.6-flash`
+- Restart the application after changing `GEMINI_API_KEY` or `GEMINI_MODEL`
 - Ensure the app is running on port `8080`
 - Send POST requests to `/api/mentor/chat`
 - Use JSON body with a `message` field
 - Check for `401` when the key is invalid and `504` when the Gemini service times out
 
-## 7) Example of a complete request
+## 8) Example of a complete request
 
 ```bash
 curl --location --request POST 'http://localhost:8080/api/mentor/chat?userId=demo-user' \

@@ -20,13 +20,16 @@ public class MentorConfig {
     @Value("${gemini.model:gemini-3.6-flash}")
     private String modelName;
 
+    @Value("${gemini.timeout-seconds:90}")
+    private long timeoutSeconds;
+
     @Bean
     public MentorAgent mentorAgent(GoalTrackingTools goalTools) {
         GoogleAiGeminiChatModel model = GoogleAiGeminiChatModel.builder()
                 .apiKey(apiKey)
                 .modelName(modelName)
                 .temperature(0.3)
-                .timeout(Duration.ofSeconds(90))
+                .timeout(Duration.ofSeconds(timeoutSeconds))
                 .build();
 
         return AiServices.builder(MentorAgent.class)
