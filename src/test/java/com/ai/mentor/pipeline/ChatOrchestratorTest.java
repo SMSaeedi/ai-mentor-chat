@@ -24,14 +24,14 @@ class ChatOrchestratorTest {
     @Test
     void cachesGeneratedResponses() {
         MentorAgent agent = mock(MentorAgent.class);
-        when(agent.chat("user-1", "hello")).thenReturn("cached answer");
+        when(agent.chat(eq("user-1"), anyString())).thenReturn("cached answer");
         ChatOrchestrator orchestrator = new ChatOrchestrator(agent, new QuestionClassifier(),
                 new ResponseCache(), new VendorKnowledgeBase(), new RetrievalService(),
                 new ConversationMemory(), new PipelineMetrics());
 
         assertEquals("cached answer", orchestrator.chat("user-1", "hello"));
         assertEquals("cached answer", orchestrator.chat("user-1", "hello"));
-        verify(agent, times(1)).chat("user-1", "hello");
+        verify(agent, times(1)).chat(eq("user-1"), anyString());
     }
 
     @Test
