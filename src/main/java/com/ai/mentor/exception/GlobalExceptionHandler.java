@@ -24,6 +24,13 @@ public class GlobalExceptionHandler {
 
         String message = rootCause.getMessage() != null ? rootCause.getMessage() : ex.getMessage();
 
+        if (rootCause instanceof IllegalArgumentException) {
+            body.put("status", HttpStatus.BAD_REQUEST.value());
+            body.put("error", "Bad Request");
+            body.put("message", message != null ? message : "The request contains invalid input.");
+            return new ResponseEntity<>(body, HttpStatus.BAD_REQUEST);
+        }
+
         if (message != null && (message.contains("API key not valid") || message.contains("INVALID_ARGUMENT"))) {
             body.put("status", HttpStatus.UNAUTHORIZED.value());
             body.put("error", "Unauthorized");

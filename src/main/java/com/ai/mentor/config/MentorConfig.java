@@ -3,6 +3,7 @@ package com.ai.mentor.config;
 import com.ai.mentor.mentor.MentorAgent;
 import com.ai.mentor.mentor.tools.GoalTrackingTools;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
+import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.googleai.GoogleAiGeminiChatModel;
 import dev.langchain4j.service.AiServices;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,14 +25,17 @@ public class MentorConfig {
     private long timeoutSeconds;
 
     @Bean
-    public MentorAgent mentorAgent(GoalTrackingTools goalTools) {
-        GoogleAiGeminiChatModel model = GoogleAiGeminiChatModel.builder()
+    public ChatLanguageModel chatLanguageModel() {
+        return GoogleAiGeminiChatModel.builder()
                 .apiKey(apiKey)
                 .modelName(modelName)
                 .temperature(0.3)
                 .timeout(Duration.ofSeconds(timeoutSeconds))
                 .build();
+    }
 
+    @Bean
+    public MentorAgent mentorAgent(GoalTrackingTools goalTools, ChatLanguageModel model) {
         return AiServices.builder(MentorAgent.class)
                 .chatLanguageModel(model)
                 .tools(goalTools)
