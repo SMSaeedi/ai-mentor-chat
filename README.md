@@ -127,7 +127,61 @@ GET /api/mentor/metrics
 
 Vendor records and response cache entries are persisted in a file-backed H2 database. RAG uses a local vector store with deterministic hashed vectors and cosine similarity, so it requires no external embedding service. The storage interfaces can later be moved to PostgreSQL, Redis, or a managed vector database without changing the controller or agent contract.
 
-## 5) Response handling and error cases
+## 5) Tool-using agent walkthrough
+
+The separate `POST /api/agent/run` endpoint implements the nine checkpoints below without changing the mentor chat endpoint. The agent uses the same Gemini model and retains a bounded conversation per `sessionId`. Set `GEMINI_API_KEY` before running model-backed requests.
+
+| Checkpoint | Capability |
+|---|---|
+| 1 | One `get_time` tool call; returns its observation directly |
+| 2 | Single-turn tool-choice eval, including a prompt expected to use no tool |
+| 3 | Bounded agent loop; stops when the model returns no tool call |
+| 4 | Multi-turn tool-choice trajectory eval, including a no-tool turn |
+| 5 | Workspace-confined `read_file`, `write_file`, and `edit_file` tools |
+| 6 | Gemini JSON response schema, with downstream shape validation |
+| 7 | Public web search via DuckDuckGo Instant Answer |
+| 8 | Old turns compacted into a summary while recent tool decisions/results stay in context |
+| 9 | Shell execution gated by a human's explicit y/n decision |
+
+The checkpoint and available tools can be inspected with:
+
+```http
+GET /api/agent/tools?checkpoint=9
+```
+
+Run any checkpoint with:
+
+```http
+POST /api/agent/run
+Content-Type: application/json
+
+{
+  "sessionId": "demo",
+  "prompt": "What time is it?",
+  "checkpoint": 3,
+  "maxSteps": 6
+}
+```
+
+`maxSteps` is limited to 1–10. The response includes the answer, model-step count, tool observations, and whether context was compacted. Evaluate tool selection at `GET /api/agent/evals/single-turn` and `GET /api/agent/evals/multi-turn`; these calls use Gemini and require a working API key.
+
+Filesystem operations are confined to `AGENT_WORKSPACE` (defaults to `agent-workspace` under the project directory); paths that escape it or resolve through an outside symlink are rejected. Web search sends the model-selected query to DuckDuckGo and requires an internet connection.
+
+Shell calls first return an `APPROVAL_REQUIRED` observation that shows the exact command, without executing it. Review that command before deciding. On the follow-up request, include `shellApproval: "y"` and copy the reviewed command exactly into `approvedShellCommand`; `"n"` denies execution, and the denial is returned to the model as a normal tool observation. An approval for a different command is rejected. Shell runs inside the workspace and times out after 15 seconds.
+
+Example approval request body (use the exact command shown in the prior response):
+
+```json
+{
+  "sessionId": "demo",
+  "prompt": "Run the reviewed shell command.",
+  "checkpoint": 9,
+  "shellApproval": "y",
+  "approvedShellCommand": "echo safe"
+}
+```
+
+## 6) Response handling and error cases
 
 The app sanitizes the AI output before returning it, removing HTML tags and unwanted formatting characters.
 
@@ -153,7 +207,7 @@ The app sanitizes the AI output before returning it, removing HTML tags and unwa
 }
 ```
 
-## 6) Configuration details
+## 7) Configuration details
 
 The Gemini client is configured in `src/main/java/com/ai/mentor/config/MentorConfig.java`:
 
@@ -172,7 +226,7 @@ This means:
 - Temperature is set to `0.3` for more deterministic responses
 - Request timeout is `90 seconds`
 
-## 7) Quick checklist
+## 8) Quick checklist
 
 - Set `GEMINI_API_KEY` before starting the app
 - Remove any old `GEMINI_MODEL` value such as `gemini-2.0-flash`, or set it explicitly to `gemini-3.6-flash`
@@ -182,7 +236,7 @@ This means:
 - Use JSON body with a `message` field
 - Check for `401` when the key is invalid and `504` when the Gemini service times out
 
-## 8) Example of a complete request
+## 9) Example of a complete request
 
 ```bash
 curl --location --request POST 'http://localhost:8080/api/mentor/chat?userId=demo-user' \
