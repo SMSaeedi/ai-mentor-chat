@@ -14,10 +14,13 @@ import java.util.List;
 public class AgentWorkshopController {
     private final AgentWorkshopService agent;
     private final AgentEvaluationService evaluations;
+    private final SpringAiEvaluationService springAiEvaluations;
 
-    public AgentWorkshopController(AgentWorkshopService agent, AgentEvaluationService evaluations) {
+    public AgentWorkshopController(AgentWorkshopService agent, AgentEvaluationService evaluations,
+                                   SpringAiEvaluationService springAiEvaluations) {
         this.agent = agent;
         this.evaluations = evaluations;
+        this.springAiEvaluations = springAiEvaluations;
     }
 
     @PostMapping("/run")
@@ -41,6 +44,12 @@ public class AgentWorkshopController {
     @GetMapping("/evals/multi-turn")
     public AgentEvaluationService.EvaluationResult multiTurnEvals() {
         return evaluations.multiTurn();
+    }
+
+    @PostMapping("/evals/spring-ai")
+    public SpringAiEvaluationService.EvaluationReport springAiEvals(
+            @RequestParam(defaultValue = "all") String suite) {
+        return springAiEvaluations.run(suite);
     }
 
     public record RunRequest(String sessionId, String prompt, Integer checkpoint,
