@@ -1,38 +1,57 @@
-﻿# Gemini API Configuration and Chat API Guide
+﻿# Local Ollama Chat API Guide
 
-This project uses the Google Gemini API through LangChain4j and exposes a REST endpoint for chat requests.
+This project uses a local Ollama model for chat, the English teacher, and Spring AI evaluations.
 
-## 1) Configure the Gemini API key
+## 1) Configure the model provider
 
-The application reads the key from the `GEMINI_API_KEY` environment variable.
+Install and start [Ollama](https://ollama.com/download), then download the default model:
 
-### Linux / macOS
-```bash
-export GEMINI_API_KEY="your_api_key_here"
-```
-
-### Windows PowerShell
 ```powershell
-$env:GEMINI_API_KEY="your_api_key_here"
+ollama pull qwen3.5:4b
 ```
 
-### Windows CMD
-```cmd
-set GEMINI_API_KEY=your_api_key_here
-```
+The default settings in `src/main/resources/application.properties` are:
 
-The property is defined in `src/main/resources/application.properties`:
 ```properties
-server.port=8080
-gemini.api.key=${GEMINI_API_KEY:}
-gemini.model=${GEMINI_MODEL:gemini-3.6-flash}
-gemini.timeout-seconds=${GEMINI_TIMEOUT_SECONDS:90}
+ollama.base-url=${OLLAMA_BASE_URL:http://localhost:11434}
+ollama.model=${OLLAMA_MODEL:qwen3.5:4b}
+ollama.timeout-seconds=${OLLAMA_TIMEOUT_SECONDS:180}
 ```
 
-Notes:
-- `gemini.api.key` loads the value from the environment variable.
-- If the variable is missing, the app starts with an empty key and the Gemini API will reject requests.
-- The model is set to `gemini-3.6-flash` by default. Override it with `GEMINI_MODEL` when using another model available to your API account.
+All model-backed endpoints share this Ollama model and timeout. Keep
+`OLLAMA_TIMEOUT_SECONDS` at `180` or higher for local generation; lower values can cause
+gateway timeouts while Ollama loads or generates a response. In IntelliJ, remove an older
+`OLLAMA_TIMEOUT_SECONDS=15` override or change it to `180`, then stop and restart the app.
+
+## AI model failover
+
+All model-backed features use local Ollama first and automatically retry a failed request
+through an OpenAI-compatible fallback. Configure the fallback in the IntelliJ run configuration
+or Windows user environment variables:
+
+```text
+AI_FALLBACK_API_KEY=your-provider-api-key
+AI_FALLBACK_MODEL=gpt-4o-mini
+AI_FALLBACK_BASE_URL=https://api.openai.com/v1
+```
+
+Use another provider's OpenAI-compatible chat-completions URL and model name if preferred.
+The fallback is disabled until `AI_FALLBACK_API_KEY` is set; do not commit API keys to the
+repository. `AI_FALLBACK_ENABLED=false` disables failover. `OLLAMA_MAX_ATTEMPTS` defaults to
+`1`, so a failed local call moves to the fallback without waiting through repeated Ollama retries.
+After Ollama fails, the app skips it for 30 seconds (`AI_PRIMARY_RECOVERY_SECONDS`) while sending
+requests to the fallback, then probes Ollama again. The first request during a new Ollama outage
+can still wait up to `OLLAMA_TIMEOUT_SECONDS` before switching providers. Restart the application
+after changing environment variables. If neither service is available, the request still fails and
+returns an error rather than a fabricated answer.
+
+Start the application with the local model:
+
+```powershell
+.\mvnw.cmd spring-boot:run
+```
+
+Ollama runs locally and does not require a cloud API key or consume hosted-model API quota. If a different Ollama model is installed, set `OLLAMA_MODEL` to its exact model tag before starting the app.
 
 ## 2) Run the application
 
@@ -112,11 +131,11 @@ public record ChatResponse(String response) {}
 Requests now pass through a local orchestration layer:
 
 1. `QuestionClassifier` categorizes requests as `GENERAL`, `MATH`, `HARM`, or `POLITICS`.
-2. Harm and politics requests are intercepted before Gemini.
+2. Harm and politics requests are intercepted before model generation.
 3. `ResponseCache` provides a CAG-style fast path for repeated user requests.
 4. `VendorKnowledgeBase` supplies relational-style vendor records.
 5. `RetrievalService` supplies category-aware RAG context.
-6. The existing Gemini `MentorAgent` generates the answer, and `ConversationMemory` keeps recent user context.
+6. The `MentorAgent` generates the answer using the local Ollama model, and `ConversationMemory` keeps recent user context.
 7. `PipelineMetrics` records category, cache, safety, and generation counters.
 
 Classification and metrics are available through:
@@ -129,7 +148,7 @@ Vendor records and response cache entries are persisted in a file-backed H2 data
 
 ## 5) Tool-using agent walkthrough
 
-The separate `POST /api/agent/run` endpoint implements the nine checkpoints below without changing the mentor chat endpoint. The agent uses the same Gemini model and retains a bounded conversation per `sessionId`. Set `GEMINI_API_KEY` before running model-backed requests.
+The separate `POST /api/agent/run` endpoint implements the nine checkpoints below without changing the mentor chat endpoint. The agent uses the local Ollama model and retains a bounded conversation per `sessionId`.
 
 | Checkpoint | Capability |
 |---|---|
@@ -138,7 +157,7 @@ The separate `POST /api/agent/run` endpoint implements the nine checkpoints belo
 | 3 | Bounded agent loop; stops when the model returns no tool call |
 | 4 | Multi-turn tool-choice trajectory eval, including a no-tool turn |
 | 5 | Workspace-confined `read_file`, `write_file`, and `edit_file` tools |
-| 6 | Gemini JSON response schema, with downstream shape validation |
+| 6 | JSON response schema, with downstream shape validation |
 | 7 | Public web search via DuckDuckGo Instant Answer |
 | 8 | Old turns compacted into a summary while recent tool decisions/results stay in context |
 | 9 | Shell execution gated by a human's explicit y/n decision |
@@ -163,7 +182,7 @@ Content-Type: application/json
 }
 ```
 
-`maxSteps` is limited to 1–10. The response includes the answer, model-step count, tool observations, and whether context was compacted. Evaluate tool selection at `GET /api/agent/evals/single-turn` and `GET /api/agent/evals/multi-turn`; these calls use Gemini and require a working API key.
+`maxSteps` is limited to 1–10. The response includes the answer, model-step count, tool observations, and whether context was compacted. Evaluate tool selection at `GET /api/agent/evals/single-turn` and `GET /api/agent/evals/multi-turn`.
 
 Filesystem operations are confined to `AGENT_WORKSPACE` (defaults to `agent-workspace` under the project directory); paths that escape it or resolve through an outside symlink are rejected. Web search sends the model-selected query to DuckDuckGo and requires an internet connection.
 
@@ -187,56 +206,26 @@ The app sanitizes the AI output before returning it, removing HTML tags and unwa
 
 ### Common error responses
 
-#### Invalid API key
-```json
-{
-  "timestamp": "2026-08-30T19:00:00",
-  "status": 401,
-  "error": "Unauthorized",
-  "message": "Invalid Gemini API Key provided. Please verify your configuration."
-}
-```
-
-#### Gemini timeout
+#### Model timeout
 ```json
 {
   "timestamp": "2026-08-30T19:00:00",
   "status": 504,
   "error": "Gateway Timeout",
-  "message": "The Gemini service did not respond in time. Please retry the request."
+  "message": "The AI model did not respond in time. Please retry the request."
 }
 ```
 
-## 7) Configuration details
+## 7) Quick checklist
 
-The Gemini client is configured in `src/main/java/com/ai/mentor/config/MentorConfig.java`:
-
-```java
-GoogleAiGeminiChatModel model = GoogleAiGeminiChatModel.builder()
-    .apiKey(apiKey)
-    .modelName(modelName)
-    .temperature(0.3)
-    .timeout(Duration.ofSeconds(90))
-    .build();
-```
-
-This means:
-- API key is injected from `gemini.api.key`
-- Model defaults to `gemini-3.6-flash`
-- Temperature is set to `0.3` for more deterministic responses
-- Request timeout is `90 seconds`
-
-## 8) Quick checklist
-
-- Set `GEMINI_API_KEY` before starting the app
-- Remove any old `GEMINI_MODEL` value such as `gemini-2.0-flash`, or set it explicitly to `gemini-3.6-flash`
-- Restart the application after changing `GEMINI_API_KEY` or `GEMINI_MODEL`
+- Run Ollama and install the configured `OLLAMA_MODEL` first
+- Restart the application after changing Ollama settings
 - Ensure the app is running on port `8080`
 - Send POST requests to `/api/mentor/chat`
 - Use JSON body with a `message` field
-- Check for `401` when the key is invalid and `504` when the Gemini service times out
+- Check for `504` when the model times out
 
-## 9) Example of a complete request
+## 8) Example of a complete request
 
 ```bash
 curl --location --request POST 'http://localhost:8080/api/mentor/chat?userId=demo-user' \
